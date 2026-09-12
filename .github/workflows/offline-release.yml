@@ -3,6 +3,9 @@ on:
   workflow_dispatch:
   push:
     paths: ['offline-source.zip', '.github/workflows/offline-release.yml']
+concurrency:
+  group: offline-release
+  cancel-in-progress: true
 permissions:
   contents: write
 jobs:
@@ -29,6 +32,7 @@ jobs:
       - name: Bundle and verify every course asset
         run: node fetch-content.cjs
       - run: node test-content.cjs
+      - run: node test-updates.cjs
       - name: Build complete installers
         run: node build.cjs
         env:
@@ -43,8 +47,11 @@ jobs:
             app="dist/$lower/mac-universal/Universe $edition.app"
             lipo "$app/Contents/MacOS/Universe $edition" -verify_arch arm64 x86_64
             codesign --verify --deep --strict "$app"
-            hdiutil verify "dist/$lower/Universe-$edition-Offline-Mac.dmg"
+            hdiutil verify "dist/$lower/Universe-$edition-Offline-2.1.0-Mac.dmg"
           done
+      - name: Generate Mac update metadata
+        if: runner.os == 'macOS'
+        run: node update-metadata.cjs
       - name: Test fresh installed content with external network blocked
         run: node smoke.cjs
       - uses: actions/upload-artifact@v4
@@ -53,6 +60,9 @@ jobs:
           path: |
             offline/dist/*/*Offline*.exe
             offline/dist/*/*Offline*.dmg
+            offline/dist/*/teacher.yml
+            offline/dist/*/student.yml
+            offline/dist/*/*-mac.json
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -74,4 +84,4 @@ jobs:
         run: |
           find installers -type f -exec cp {} . \;
           sha256sum Universe-* > SHA256SUMS-offline.txt
-          gh release create offline-v2.0.0 Universe-* SHA256SUMS-offline.txt --title 'Universe Offline 2.0.0' --notes 'Full offline teacher and student desktop apps for Windows x64 and universal Mac (Apple Silicon + Intel). Lessons, scenes, slides for teachers, videos and generated background music are bundled. No first-run course download required. External reference websites and future updates need internet. Mac builds are ad-hoc signed, not Developer ID signed or notarized. Physical projector hardware not tested by CI.'
+          gh release create offline-v2.1.0 Universe-* teacher.yml student.yml teacher-mac.json student-mac.json SHA256SUMS-offline.txt --title 'Universe Offline 2.1.0' --notes 'Offline apps with background update checks. Windows downloads updates automatically and installs on quit. Mac downloads updated DMG files automatically; installation still needs user confirmation until Developer ID signing is configured. Install 2.1.0 manually once to enable updates. Lessons, scenes, slides for teachers, videos and generated background music are bundled. No first-run course download required. External reference websites and future updates need internet. Mac builds are ad-hoc signed, not Developer ID signed or notarized. Physical projector hardware not tested by CI.'

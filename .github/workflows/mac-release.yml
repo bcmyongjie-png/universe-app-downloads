@@ -27,23 +27,10 @@ jobs:
           for edition in Teacher Student; do
             lower=$(echo "$edition" | tr '[:upper:]' '[:lower:]')
             app="dist/$lower/mac-universal/Universe $edition.app"
-            lipo -verify_arch arm64 x86_64 "$app/Contents/MacOS/Universe $edition"
+            lipo "$app/Contents/MacOS/Universe $edition" -verify_arch arm64 x86_64
             codesign --verify --deep --strict "$app"
             hdiutil verify "dist/$lower/Universe-$edition-Mac.dmg"
           done
           shasum -a 256 dist/*/*.dmg > SHA256SUMS.txt
       - name: Start both packaged Mac apps
         run: node smoke.cjs
-      - name: Publish downloadable installers
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release create mac-v1.0.1 dist/teacher/Universe-Teacher-Mac.dmg dist/student/Universe-Student-Mac.dmg SHA256SUMS.txt --title 'Universe for Mac 1.0.1' --notes 'Universal Mac desktop apps for Apple Silicon and Intel. Open the DMG and drag the App to Applications. These builds are ad-hoc signed, not Apple Developer ID signed or notarized. macOS may require confirmation in Privacy & Security. Courses require internet. Projector use requires extended-display mode.'
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: mac-build-report
-          path: |
-            SHA256SUMS.txt
-            dist/*/builder-debug.yml
-            smoke-results/

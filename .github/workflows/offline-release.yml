@@ -2,7 +2,7 @@ name: Build fully offline desktop apps
 on:
   workflow_dispatch:
   push:
-    paths: ['offline-source.zip', '.github/workflows/offline-release.yml']
+    paths: ['offline-source.zip']
 concurrency:
   group: offline-release
   cancel-in-progress: true
@@ -47,7 +47,7 @@ jobs:
             app="dist/$lower/mac-universal/Universe $edition.app"
             lipo "$app/Contents/MacOS/Universe $edition" -verify_arch arm64 x86_64
             codesign --verify --deep --strict "$app"
-            hdiutil verify "dist/$lower/Universe-$edition-Offline-2.1.0-Mac.dmg"
+            hdiutil verify "dist/$lower/Universe-$edition-Offline-"*-Mac.dmg
           done
       - name: Generate Mac update metadata
         if: runner.os == 'macOS'
@@ -84,4 +84,5 @@ jobs:
         run: |
           find installers -type f -exec cp {} . \;
           sha256sum Universe-* > SHA256SUMS-offline.txt
-          gh release create offline-v2.1.0 Universe-* teacher.yml student.yml teacher-mac.json student-mac.json SHA256SUMS-offline.txt --title 'Universe Offline 2.1.0' --notes 'Offline apps with background update checks. Windows downloads updates automatically and installs on quit. Mac downloads updated DMG files automatically; installation still needs user confirmation until Developer ID signing is configured. Install 2.1.0 manually once to enable updates. Lessons, scenes, slides for teachers, videos and generated background music are bundled. No first-run course download required. External reference websites and future updates need internet. Mac builds are ad-hoc signed, not Developer ID signed or notarized. Physical projector hardware not tested by CI.'
+          version=$(ls Universe-Teacher-Offline-*-Setup.exe | sed -E 's/Universe-Teacher-Offline-([0-9.]+)-Setup.exe/\1/')
+          gh release create "offline-v$version" Universe-* teacher.yml student.yml teacher-mac.json student-mac.json SHA256SUMS-offline.txt --title "Universe Offline $version" --notes 'Offline apps with background update checks. Windows downloads updates automatically and installs on quit. Mac downloads updated DMG files automatically; installation still needs user confirmation until Developer ID signing is configured. Install 2.1.0 manually once to enable updates. Lessons, scenes, slides for teachers, videos and generated background music are bundled. No first-run course download required. External reference websites and future updates need internet. Mac builds are ad-hoc signed, not Developer ID signed or notarized. Physical projector hardware not tested by CI.'

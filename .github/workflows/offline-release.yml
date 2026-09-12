@@ -1,0 +1,77 @@
+name: Build fully offline desktop apps
+on:
+  workflow_dispatch:
+  push:
+    paths: ['offline-source.zip', '.github/workflows/offline-release.yml']
+permissions:
+  contents: write
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-15]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 35
+    defaults:
+      run:
+        working-directory: offline
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Extract offline source
+        working-directory: .
+        shell: bash
+        run: unzip -q offline-source.zip -d offline
+      - run: npm ci
+      - name: Bundle and verify every course asset
+        run: node fetch-content.cjs
+      - run: node test-content.cjs
+      - name: Build complete installers
+        run: node build.cjs
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - name: Verify universal Mac apps
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          for edition in Teacher Student; do
+            lower=$(echo "$edition" | tr '[:upper:]' '[:lower:]')
+            app="dist/$lower/mac-universal/Universe $edition.app"
+            lipo "$app/Contents/MacOS/Universe $edition" -verify_arch arm64 x86_64
+            codesign --verify --deep --strict "$app"
+            hdiutil verify "dist/$lower/Universe-$edition-Offline-Mac.dmg"
+          done
+      - name: Test fresh installed content with external network blocked
+        run: node smoke.cjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: offline-installers-${{ runner.os }}
+          path: |
+            offline/dist/*/*Offline*.exe
+            offline/dist/*/*Offline*.dmg
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: offline-test-${{ runner.os }}
+          path: offline/smoke-results/
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: offline-installers-*
+          path: installers
+          merge-multiple: true
+      - name: Publish verified offline installers
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          find installers -type f -exec cp {} . \;
+          sha256sum Universe-* > SHA256SUMS-offline.txt
+          gh release create offline-v2.0.0 Universe-* SHA256SUMS-offline.txt --title 'Universe Offline 2.0.0' --notes 'Full offline teacher and student desktop apps for Windows x64 and universal Mac (Apple Silicon + Intel). Lessons, scenes, slides for teachers, videos and generated background music are bundled. No first-run course download required. External reference websites and future updates need internet. Mac builds are ad-hoc signed, not Developer ID signed or notarized. Physical projector hardware not tested by CI.'

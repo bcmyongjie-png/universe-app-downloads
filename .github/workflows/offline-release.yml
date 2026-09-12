@@ -33,6 +33,7 @@ jobs:
         run: node fetch-content.cjs
       - run: node test-content.cjs
       - run: node test-updates.cjs
+      - run: node test-update-consent.cjs
       - name: Build complete installers
         run: node build.cjs
         env:
@@ -85,4 +86,4 @@ jobs:
           find installers -type f -exec cp {} . \;
           sha256sum Universe-* > SHA256SUMS-offline.txt
           version=$(ls Universe-Teacher-Offline-*-Setup.exe | sed -E 's/Universe-Teacher-Offline-([0-9.]+)-Setup.exe/\1/')
-          gh release create "offline-v$version" Universe-* teacher.yml student.yml teacher-mac.json student-mac.json SHA256SUMS-offline.txt --title "Universe Offline $version" --notes 'Offline apps with background update checks. Windows downloads updates automatically and installs on quit. Mac downloads updated DMG files automatically; installation still needs user confirmation until Developer ID signing is configured. Install 2.1.0 manually once to enable updates. Lessons, scenes, slides for teachers, videos and generated background music are bundled. No first-run course download required. External reference websites and future updates need internet. Mac builds are ad-hoc signed, not Developer ID signed or notarized. Physical projector hardware not tested by CI.'
+          gh release create "offline-v$version" Universe-* teacher.yml student.yml teacher-mac.json student-mac.json SHA256SUMS-offline.txt --title "Universe Offline $version" --notes 'Offline apps with background update checks. Updates are checked automatically on launch, periodically and when reconnecting. Download and installation each require user choice. Later keeps the current version; quitting does not install updates. Mac installation uses the normal DMG flow. Install 2.1.1 to enable this consent policy. Lessons, scenes, slides for teachers, videos and generated background music are bundled. No first-run course download required. External reference websites and future updates need internet. Mac builds are ad-hoc signed, not Developer ID signed or notarized. Physical projector hardware not tested by CI.'

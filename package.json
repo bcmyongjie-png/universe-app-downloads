@@ -1,0 +1,1 @@
+{"name":"universe-classroom-macos","version":"1.0.1","private":true,"description":"Universe science classroom for macOS","author":"Universe Classroom","main":"main.cjs","scripts":{"build":"node build.cjs"},"devDependencies":{"electron":"44.3.0","electron-builder":"26.15.3","playwright":"1.62.1"}}

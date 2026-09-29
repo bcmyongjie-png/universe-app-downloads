@@ -1,0 +1,64 @@
+name: Validate scene candidate
+on:
+  workflow_dispatch:
+  push:
+    paths: [scene-audit-source.zip]
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Extract reviewed source
+        run: unzip -q scene-audit-source.zip
+      - name: Restore verified public lesson media
+        run: node hydrate.cjs
+      - name: Install build and test dependencies
+        working-directory: work
+        run: |
+          npm ci
+          npm install --no-save --package-lock=false playwright@1.62.1
+          npx playwright install --with-deps chromium
+      - name: Build teacher and student websites
+        working-directory: work
+        run: node build-editions.cjs
+      - name: Check all 46 topics on desktop and mobile
+        working-directory: work
+        run: node candidate-all-scenes.cjs
+      - name: Check changed animations, pause, seek, zoom and return
+        working-directory: work
+        run: node candidate-motion.cjs
+      - name: Check projector links and all exit routes
+        working-directory: work
+        run: node candidate-projector.cjs
+      - name: Prepare offline release candidate
+        working-directory: work
+        run: |
+          node native/prepare-offline.cjs
+          node native/offline/test-content.cjs
+          node native/offline/test-updates.cjs
+          node native/offline/test-update-consent.cjs
+          node candidate-publish-files.cjs
+      - name: Archive offline source for platform builds
+        working-directory: work/native/offline
+        run: zip -q ../../../offline-source-candidate.zip build.cjs main.cjs preload.cjs local-content.cjs updates.cjs update-metadata.cjs test-updates.cjs test-windows-updater.cjs test-update-consent.cjs test-content.cjs smoke.cjs fetch-content.cjs DisplayMode.cs package.json package-lock.json teacher-512.png student-512.png teacher-app.js student-app.js teacher-index.html student-index.html teacher-assets.json student-assets.json UPDATES.md
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: scene-candidate-visual-evidence
+          path: work/qa-results/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: scene-candidate-build
+          path: |
+            offline-source-candidate.zip
+            work/vercel-release/
+            work/student-release/
+            work/teacher-build-meta.json
+            work/student-build-meta.json
+            work/publish-files.json

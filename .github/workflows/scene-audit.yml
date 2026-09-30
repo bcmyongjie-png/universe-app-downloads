@@ -27,6 +27,22 @@ jobs:
           for (const [to, from] of aliases) fs.copyFileSync('work/new-pages/'+from+'.webp','work/new-pages/'+to+'.webp');
           console.log('Restored '+aliases.length+' verified identical image aliases');
           NODE
+      - name: Refine water normals and deterministic visual capture
+        working-directory: work
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const testPath = 'candidate-motion.cjs';
+          const test = fs.readFileSync(testPath,'utf8');
+          const mask = "mask:[page.locator('#lessonTimeline')]";
+          if(test.split(mask).length-1 !== 4) throw Error('Unexpected capture calls');
+          fs.writeFileSync(testPath,test.replaceAll(mask,"mask:[page.locator('#lessonTimeline'),page.locator('#visualMeasure')]"));
+          const ocean = fs.readFileSync('ocean-impact.js','utf8');
+          const edits = [["120,120,200,200","120,120,320,320"],["uniform float age;varying vec3 world;","uniform float age;varying vec3 world;varying vec2 waterXY;"],["void main(){vec3 p=position;float r=length(p.xy),front=age*22.;","void main(){vec3 p=position;waterXY=p.xy;float r=length(p.xy),front=age*22.;"],["varying vec3 world;void main(){vec3 n=normalize(cross(dFdx(world),dFdy(world)));if(n.y<0.)n=-n;","uniform float age;varying vec3 world;varying vec2 waterXY;void main(){\n   float r=length(waterXY),q=r-age*22.;\n   float amplitude=.42*sin(min(age*6.,1.)*1.5708)*pow(1.-age,1.5);\n   float slope=amplitude*exp(-pow(q/1.65,2.))*(4.*cos(4.*q)-2.*q/(1.65*1.65)*sin(4.*q));\n   vec2 gradient=waterXY/max(r,.0001)*slope;\n   vec3 n=normalize(vec3(-gradient.x,1.,gradient.y));"]];
+          let fixed=ocean;
+          for(const [from,to] of edits){if(!fixed.includes(from))throw Error('Unexpected ocean source');fixed=fixed.replace(from,to);}
+          fs.writeFileSync('ocean-impact.js',fixed);
+          NODE
       - name: Install build and test dependencies
         working-directory: work
         run: |

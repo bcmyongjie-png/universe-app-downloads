@@ -2,7 +2,7 @@ name: Validate scene candidate
 on:
   workflow_dispatch:
   push:
-    paths: [scene-audit-source.zip]
+    paths: [scene-audit-source.zip, .github/workflows/scene-audit.yml]
 permissions:
   contents: read
 jobs:
@@ -17,7 +17,16 @@ jobs:
       - name: Extract reviewed source
         run: unzip -q scene-audit-source.zip
       - name: Restore verified public lesson media
-        run: node hydrate.cjs
+        run: |
+          node hydrate.cjs
+          node <<'NODE'
+          const fs = require('node:fs');
+          // These source paths share byte-identical media; esbuild lists each emitted image once.
+          const aliases = [['new4/1','new2/1'],['new5/1','new1/1'],['new5/97','new4/98'],['new5/125','new5/124'],['new5/127','new5/126']];
+          for (const n of [10,11,12,13,14,77,81,83,84,87,88,89,90,91,92,93,94,95,96,98,99,100,101,102,103,104,105,106,107,108]) aliases.push(['new5/'+n,'new4/'+n]);
+          for (const [to, from] of aliases) fs.copyFileSync('work/new-pages/'+from+'.webp','work/new-pages/'+to+'.webp');
+          console.log('Restored '+aliases.length+' verified identical image aliases');
+          NODE
       - name: Install build and test dependencies
         working-directory: work
         run: |

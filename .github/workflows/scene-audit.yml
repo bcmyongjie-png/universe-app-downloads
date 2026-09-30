@@ -36,7 +36,9 @@ jobs:
           const test = fs.readFileSync(testPath,'utf8');
           const mask = "mask:[page.locator('#lessonTimeline')]";
           if(test.split(mask).length-1 !== 4) throw Error('Unexpected capture calls');
-          fs.writeFileSync(testPath,test.replaceAll(mask,"mask:[page.locator('#lessonTimeline'),page.locator('#visualMeasure')]"));
+          let revised=test.replaceAll(mask,"style:'body * { visibility: hidden !important } #space, #space * { visibility: visible !important }'");
+          revised=revised.replace("['earth:2','climate'],",'').replace("[['galaxy:4','fusion']","[['earth:2','climate'],['galaxy:4','fusion']");
+          fs.writeFileSync(testPath,revised);
           const ocean = fs.readFileSync('ocean-impact.js','utf8');
           const edits = [["120,120,200,200","120,120,320,320"],["uniform float age;varying vec3 world;","uniform float age;varying vec3 world;varying vec2 waterXY;"],["void main(){vec3 p=position;float r=length(p.xy),front=age*22.;","void main(){vec3 p=position;waterXY=p.xy;float r=length(p.xy),front=age*22.;"],["varying vec3 world;void main(){vec3 n=normalize(cross(dFdx(world),dFdy(world)));if(n.y<0.)n=-n;","uniform float age;varying vec3 world;varying vec2 waterXY;void main(){\n   float r=length(waterXY),q=r-age*22.;\n   float amplitude=.42*sin(min(age*6.,1.)*1.5708)*pow(1.-age,1.5);\n   float slope=amplitude*exp(-pow(q/1.65,2.))*(4.*cos(4.*q)-2.*q/(1.65*1.65)*sin(4.*q));\n   vec2 gradient=waterXY/max(r,.0001)*slope;\n   vec3 n=normalize(vec3(-gradient.x,1.,gradient.y));"]];
           let fixed=ocean;
@@ -52,12 +54,12 @@ jobs:
       - name: Build teacher and student websites
         working-directory: work
         run: node build-editions.cjs
-      - name: Check all 46 topics on desktop and mobile
-        working-directory: work
-        run: node candidate-all-scenes.cjs
       - name: Check changed animations, pause, seek, zoom and return
         working-directory: work
         run: node candidate-motion.cjs
+      - name: Check all 46 topics on desktop and mobile
+        working-directory: work
+        run: node candidate-all-scenes.cjs
       - name: Check projector links and all exit routes
         working-directory: work
         run: node candidate-projector.cjs

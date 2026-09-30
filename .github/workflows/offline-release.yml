@@ -1,6 +1,11 @@
 name: Build fully offline desktop apps
 on:
   workflow_dispatch:
+    inputs:
+      candidate_run_id:
+        description: Successful scene validation run ID (leave empty for offline-source.zip)
+        required: false
+        type: string
   push:
     paths: ['offline-source.zip']
 concurrency:
@@ -8,6 +13,7 @@ concurrency:
   cancel-in-progress: true
 permissions:
   contents: write
+  actions: read
 jobs:
   build:
     strategy:
@@ -24,10 +30,37 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - name: Verify selected scene candidate
+        if: inputs.candidate_run_id != ''
+        uses: actions/github-script@v7
+        env:
+          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+        with:
+          script: |
+            const id = process.env.CANDIDATE_RUN_ID;
+            if (!/^[0-9]+$/.test(id)) throw new Error('Invalid candidate run ID');
+            const {data: run} = await github.rest.actions.getWorkflowRun({...context.repo, run_id: Number(id)});
+            if (run.path !== '.github/workflows/scene-audit.yml' || run.head_branch !== 'main' || run.status !== 'completed' || run.conclusion !== 'success') throw new Error('Candidate must pass all scene validation checks on main');
+            core.info('Validated candidate commit '+run.head_sha);
+      - name: Download validated offline candidate
+        if: inputs.candidate_run_id != ''
+        uses: actions/download-artifact@v4
+        with:
+          name: scene-candidate-build
+          path: candidate
+          run-id: ${{ inputs.candidate_run_id }}
+          github-token: ${{ github.token }}
       - name: Extract offline source
         working-directory: .
         shell: bash
-        run: unzip -q offline-source.zip -d offline
+        env:
+          CANDIDATE_RUN_ID: ${{ inputs.candidate_run_id }}
+        run: |
+          if [ -n "$CANDIDATE_RUN_ID" ]; then
+            unzip -q candidate/offline-source-candidate.zip -d offline
+          else
+            unzip -q offline-source.zip -d offline
+          fi
       - run: npm ci
       - name: Bundle and verify every course asset
         run: node fetch-content.cjs
@@ -86,4 +119,4 @@ jobs:
           find installers -type f -exec cp {} . \;
           sha256sum Universe-* > SHA256SUMS-offline.txt
           version=$(ls Universe-Teacher-Offline-*-Setup.exe | sed -E 's/Universe-Teacher-Offline-([0-9.]+)-Setup.exe/\1/')
-          gh release create "offline-v$version" Universe-* teacher.yml student.yml teacher-mac.json student-mac.json SHA256SUMS-offline.txt --title "Universe Offline $version" --notes 'Offline apps with background update checks. Updates are checked automatically on launch, periodically and when reconnecting. Download and installation each require user choice. Later keeps the current version; quitting does not install updates. Mac installation uses the normal DMG flow. Install 2.1.1 to enable this consent policy. Lessons, scenes, slides for teachers, videos and generated background music are bundled. No first-run course download required. External reference websites and future updates need internet. Mac builds are ad-hoc signed, not Developer ID signed or notarized. Physical projector hardware not tested by CI.'
+          gh release create "offline-v$version" Universe-* teacher.yml student.yml teacher-mac.json student-mac.json SHA256SUMS-offline.txt --title "Universe Offline $version" --notes 'Offline apps with background update checks. Updates are checked automatically on launch, periodically and when reconnecting. Download and installation each require user choice. Later keeps the current version; quitting does not install updates. Mac installation uses the normal DMG flow. Lessons, scenes, slides for teachers, videos and generated background music are bundled. No first-run course download required. External reference websites and future updates need internet. Mac builds are ad-hoc signed, not Developer ID signed or notarized. Physical projector hardware not tested by CI.'

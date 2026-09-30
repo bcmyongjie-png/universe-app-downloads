@@ -61,6 +61,19 @@ jobs:
           else
             unzip -q offline-source.zip -d offline
           fi
+      - name: Keep ocean lesson headings readable
+        if: inputs.candidate_run_id != ''
+        shell: bash
+        run: |
+          node <<'NODE'
+          const fs=require('node:fs');
+          const css="\n/* Keep lesson headings legible above the bright sea horizon. */\nbody.visual-lesson:has(#lessonTimeline[data-kind=\"impact\"]) :is(#location,#editionBadge,#home span){color:#102c3a!important;text-shadow:0 1px 1px #e9f5ff8c}\n";
+          for(const edition of ['teacher','student']){
+            const p=edition+'-index.html',html=fs.readFileSync(p,'utf8');
+            if(!html.includes('</style>'))throw Error('Expected bundled course styles');
+            fs.writeFileSync(p,html.replace('</style>',css+'</style>'));
+          }
+          NODE
       - run: npm ci
       - name: Bundle and verify every course asset
         run: node fetch-content.cjs

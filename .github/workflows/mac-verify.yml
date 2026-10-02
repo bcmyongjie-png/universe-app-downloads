@@ -1,0 +1,96 @@
+name: Verify published Mac installers
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, macos-15-intel]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Prepare existing offline smoke test
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s  %s\n' d71b6e208e8c758c7031a614284a14aead6f44612522eca916f32ccde40b92e6 scene-audit-source.zip | shasum -a 256 -c -
+          mkdir -p mac-check/smoke-results
+          unzip -p scene-audit-source.zip work/native/offline/smoke.cjs > mac-check/smoke.cjs
+          cd mac-check
+          printf '{"private":true}\n' > package.json
+          npm install --no-save --ignore-scripts --package-lock=false playwright@1.62.1
+          node <<'NODE'
+          const fs=require('fs');
+          const p='smoke.cjs',source=fs.readFileSync(p,'utf8');
+          const marker='const page=await app.firstWindow(),errors=[];';
+          if(!source.includes(marker))throw Error('Expected smoke launch marker');
+          fs.writeFileSync(p,source.replace(marker,"assert.equal(await app.evaluate(()=>process.arch),process.arch); assert.equal(await app.evaluate(({app})=>app.getVersion()),'2.2.13'); console.log(edition+': native '+process.arch+' runtime, v2.2.13'); "+marker));
+          NODE
+      - name: Download, verify and install the released DMGs
+        working-directory: mac-check
+        shell: bash
+        run: |
+          set -euo pipefail
+          sw_vers | tee smoke-results/system.txt
+          uname -m | tee -a smoke-results/system.txt
+          base=https://github.com/bcmyongjie-png/universe-app-downloads/releases/download/offline-v2.2.13
+          for edition in Teacher Student; do
+            lower=$(echo "$edition" | tr '[:upper:]' '[:lower:]')
+            file="Universe-$edition-Offline-2.2.13-Mac.dmg"
+            curl --fail --location --retry 3 --output "$file" "$base/$file"
+            if [ "$edition" = Teacher ]; then
+              digest=de1189ed21c9f5ef1dbb6681f0949b0cfff2e95e44ab51647cc41c19572789f3
+            else
+              digest=ee22768291d4867e8d2f854b5e577dbc5b7d3c008edf1dd0745fbaae18c96769
+            fi
+            printf '%s  %s\n' "$digest" "$file" | shasum -a 256 -c -
+            hdiutil verify "$file"
+            mount="$RUNNER_TEMP/universe-mount-$lower"
+            mkdir -p "$mount" "dist/$lower/mac-universal"
+            hdiutil attach "$file" -readonly -nobrowse -mountpoint "$mount"
+            app="dist/$lower/mac-universal/Universe $edition.app"
+            ditto "$mount/Universe $edition.app" "$app"
+            hdiutil detach "$mount"
+            lipo "$app/Contents/MacOS/Universe $edition" -verify_arch arm64 x86_64
+            lipo "$app/Contents/Frameworks/Electron Framework.framework/Electron Framework" -verify_arch arm64 x86_64
+            codesign --verify --deep --strict "$app"
+            /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist" | tee "smoke-results/$lower-version.txt"
+            /usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$app/Contents/Info.plist" | tee "smoke-results/$lower-minimum-macos.txt"
+            codesign -dv "$app" 2> "smoke-results/$lower-signature.txt"
+          done
+          node <<'NODE'
+          const fs=require('fs'),path=require('path');
+          for(const edition of ['Teacher','Student']){
+            const lower=edition.toLowerCase();
+            const course=path.join('dist',lower,'mac-universal','Universe '+edition+'.app','Contents','Resources','course');
+            const videos=[];
+            function walk(dir,rel=''){
+              for(const entry of fs.readdirSync(dir,{withFileTypes:true})){
+                const name=path.posix.join(rel,entry.name),full=path.join(dir,entry.name);
+                if(entry.isDirectory())walk(full,name);
+                else if(name.endsWith('.mp4'))videos.push({path:name});
+              }
+            }
+            walk(course);if(!videos.length)throw Error(edition+' missing offline videos');
+            fs.writeFileSync(lower+'-assets.json',JSON.stringify(videos));
+            console.log(edition+': '+videos.length+' bundled videos');
+          }
+          NODE
+      - name: Run both installed editions without external network
+        working-directory: mac-check
+        shell: bash
+        run: |
+          set -euo pipefail
+          node smoke.cjs 2>&1 | tee smoke-results/offline-test.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: released-mac-${{ matrix.os }}
+          path: mac-check/smoke-results/

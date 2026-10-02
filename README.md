@@ -26,7 +26,7 @@
 ## 验证记录
 
 - [2.2.13 构建与离线测试](https://github.com/bcmyongjie-png/universe-app-downloads/actions/runs/36655543851)：Windows 与 macOS 教师/学生版在阻断外部网络下启动，检查全部 46 个主题、交互和视频播放。
-- [已发布 DMG 的双芯片回测](https://github.com/bcmyongjie-png/universe-app-downloads/actions/workflows/mac-verify.yml)：直接下载发布文件，核对 SHA-256、DMG、签名和两种架构，分别在 macOS 15 Apple Silicon 与 Intel 主机运行教师/学生版。以链接中的运行结果为准。
+- [已发布 DMG 的双芯片回测](https://github.com/bcmyongjie-png/universe-app-downloads/actions/workflows/mac-verify.yml)：直接下载发布文件，核对 SHA-256、DMG、签名和两种架构，分别在 macOS 15 Apple Silicon 与 Intel 主机运行教师/学生版。Intel 云端测试机没有可用 GPU，因此仅在该测试进程中使用 SwiftShader 软件渲染；Apple Silicon 使用默认图形配置，发布的 App 保持默认图形配置。此项验证不能代表所有实体 Mac 的显卡性能。以链接中的运行结果为准。
 - 测试通过不等于所有历史 macOS、所有硬件或 Gatekeeper 首次安装流程均已验证。
 
 仓库根目录的 main.cjs 等文件保留早期在线包装版本；当前离线安装包由 offline-release.yml 和经过场景验证的离线源码产物生成。完整版本及校验清单请见 [Releases](https://github.com/bcmyongjie-png/universe-app-downloads/releases)。

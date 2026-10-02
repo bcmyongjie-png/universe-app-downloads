@@ -28,10 +28,12 @@ jobs:
           npm install --no-save --ignore-scripts --package-lock=false playwright@1.62.1
           node <<'NODE'
           const fs=require('fs');
-          const p='smoke.cjs',source=fs.readFileSync(p,'utf8');
+          const p='smoke.cjs';let source=fs.readFileSync(p,'utf8');
           const marker='const page=await app.firstWindow(),errors=[];';
           if(!source.includes(marker))throw Error('Expected smoke launch marker');
-          fs.writeFileSync(p,source.replace(marker,"assert.equal(await app.evaluate(()=>process.arch),process.arch); assert.equal(await app.evaluate(({app})=>app.getVersion()),'2.2.13'); console.log(edition+': native '+process.arch+' runtime, v2.2.13'); "+marker));
+          source=source.replace(marker,"const page=await app.firstWindow(),errors=[]; page.on('console',m=>console.log('PAGE '+m.type()+': '+m.text())); page.on('pageerror',e=>console.log('PAGE ERROR '+e.stack)); page.on('requestfailed',r=>console.log('REQUEST FAILED '+r.url()+' '+r.failure()?.errorText)); assert.equal(await app.evaluate(()=>process.arch),process.arch); assert.equal(await app.evaluate(({app})=>app.getVersion()),'2.2.13'); console.log(edition+': native '+process.arch+' runtime, v2.2.13');");
+          source=source.replace("await page.locator('#space canvas').waitFor();","try{await page.locator('#space canvas').waitFor()}catch(error){console.log('STARTUP STATE '+JSON.stringify(await page.evaluate(()=>({url:location.href,title:document.title,text:document.body.innerText,scripts:[...document.scripts].map(s=>s.src),canvases:document.querySelectorAll('canvas').length}))));await page.screenshot({path:'smoke-results/'+lower+'-startup-failure.png'});fs.writeFileSync('smoke-results/'+lower+'-startup.html',await page.content());throw error}");
+          fs.writeFileSync(p,source);
           NODE
       - name: Download, verify and install the released DMGs
         working-directory: mac-check

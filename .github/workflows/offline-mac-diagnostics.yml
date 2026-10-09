@@ -1,0 +1,97 @@
+name: Diagnose Mac candidate fullscreen and graphics
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  verify_mac:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [macos-15, macos-15-intel]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Restore the same test source
+        shell: bash
+        run: |
+          set -euo pipefail
+          unzip -q offline-source-2.2.15.zip -d offline
+          cd offline
+          npm ci
+      - uses: actions/download-artifact@v4
+        with:
+          name: installers-2.2.15-macOS
+          path: installers
+          run-id: 37878274228
+          github-token: ${{ github.token }}
+      - name: Copy fresh apps from the actual release DMGs
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p offline/smoke-results
+          sw_vers > offline/smoke-results/macos-system.txt
+          uname -m >> offline/smoke-results/macos-system.txt
+          for edition in Teacher Student; do
+            lower=$(echo "$edition" | tr '[:upper:]' '[:lower:]')
+            dmg=$(find installers -type f -name "Universe-$edition-Offline-2.2.15-Mac.dmg")
+            test -f "$dmg"
+            hdiutil verify "$dmg"
+            mount="$RUNNER_TEMP/universe-dmg-$lower"
+            mkdir -p "$mount"
+            hdiutil attach -readonly -nobrowse -mountpoint "$mount" "$dmg"
+            trap 'hdiutil detach "$mount" || true' EXIT
+            app="offline/dist/$lower/mac-universal/Universe $edition.app"
+            mkdir -p "offline/dist/$lower/mac-universal"
+            ditto "$mount/Universe $edition.app" "$app"
+            hdiutil detach "$mount"
+            trap - EXIT
+            codesign --verify --deep --strict "$app"
+            lipo "$app/Contents/MacOS/Universe $edition" -verify_arch arm64 x86_64
+            lipo "$app/Contents/Resources/mac-display-helper" -verify_arch arm64 x86_64
+            version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")
+            test "$version" = '2.2.15'
+            minimum=$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$app/Contents/Info.plist")
+            case "$minimum" in 13|13.0|13.0.0) ;; *) echo "Unexpected minimum macOS: $minimum"; exit 1 ;; esac
+            printf '%s\n' "$minimum" > "offline/smoke-results/$lower-minimum-macos.txt"
+            codesign -dv --verbose=4 "$app" 2> "offline/smoke-results/$lower-signature.txt"
+          done
+      - name: Diagnose actual Mac fullscreen input and graphics
+        working-directory: offline
+        shell: bash
+        run: |
+          node <<'NODE'
+          const {_electron}=require('playwright'),fs=require('fs'),path=require('path'),os=require('os');
+          (async()=>{
+            const a=await _electron.launch({executablePath:path.resolve('dist/teacher/mac-universal/Universe Teacher.app/Contents/MacOS/Universe Teacher'),env:{...process.env,UNIVERSE_TEST_DATA:fs.mkdtempSync(path.join(os.tmpdir(),'mac-diagnostic-'))},timeout:60000});
+            try{
+              const p=await a.firstWindow();
+              await a.evaluate(({BrowserWindow})=>{const w=BrowserWindow.getAllWindows()[0];w.__inputs=[];w.webContents.on('before-input-event',(e,k)=>w.__inputs.push({key:k.key,code:k.code,type:k.type}));});
+              const snapshot=()=>a.evaluate(async({app,BrowserWindow})=>{const w=BrowserWindow.getAllWindows()[0];return {arch:process.arch,visible:w.isVisible(),simple:w.isSimpleFullScreen(),native:w.isFullScreen(),inputs:w.__inputs,gpu:app.getGPUFeatureStatus(),info:await app.getGPUInfo('basic')};});
+              console.log('INITIAL',JSON.stringify(await snapshot()));
+              await p.locator('#teacherToggle').click().catch(e=>console.log(e.message));
+              await p.keyboard.press('F11');
+              console.log('AFTER PLAYWRIGHT F11',JSON.stringify(await snapshot()));
+              await new Promise(r=>setTimeout(r,1500));
+              console.log('AFTER F11 SETTLED',JSON.stringify(await snapshot()));
+              await a.evaluate(({BrowserWindow})=>{const w=BrowserWindow.getAllWindows()[0];w.webContents.sendInputEvent({type:'keyDown',keyCode:'F11'});w.webContents.sendInputEvent({type:'keyUp',keyCode:'F11'});});
+              await new Promise(r=>setTimeout(r,1500));
+              console.log('AFTER NATIVE INPUT',JSON.stringify(await snapshot()));
+              await p.locator('#fullscreenToggle').click().catch(e=>console.log(e.message));
+              await new Promise(r=>setTimeout(r,1500));
+              console.log('AFTER UI FULLSCREEN',JSON.stringify(await snapshot()));
+              console.log('VISIBLE',await p.locator('body').innerText());
+              await p.screenshot({path:'smoke-results/diagnostic.png'});
+            }finally{await a.close();}
+          })().catch(e=>{console.error(e);process.exitCode=1});
+          NODE
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mac-diagnostic-${{ matrix.runner }}
+          path: offline/smoke-results/

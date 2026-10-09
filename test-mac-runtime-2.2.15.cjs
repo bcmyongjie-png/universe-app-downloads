@@ -11,7 +11,9 @@ const version=require('./package.json').version;
   const executablePath=path.resolve(`dist/${lower}/mac-universal/Universe ${edition}.app/Contents/MacOS/Universe ${edition}`);
   let app,page;
   try{
+   console.log(edition+': launching DMG app');
    app=await _electron.launch({executablePath,args:['--host-resolver-rules=MAP * ~NOTFOUND','--disable-background-networking'],env:{...process.env,UNIVERSE_TEST_DATA:fs.mkdtempSync(path.join(os.tmpdir(),'universe-mac-verify-'))},timeout:60000});
+   console.log(edition+': launched');
    report.runtime=await app.evaluate(({app})=>({version:app.getVersion(),arch:process.arch,platform:process.platform,gpu:app.getGPUFeatureStatus()}));
    assert.equal(report.runtime.platform,'darwin');assert.equal(report.runtime.version,version);assert.equal(report.runtime.arch,process.arch,'A universal DMG must run natively on this chip');
    const helper=path.resolve(`dist/${lower}/mac-universal/Universe ${edition}.app/Contents/Resources/mac-display-helper`);
@@ -20,22 +22,22 @@ const version=require('./package.json').version;
    assert.equal(report.displays.ok,true);assert.ok(report.displays.displays.length);
    page=await app.firstWindow();page.setDefaultTimeout(30000);
    await page.waitForURL('https://universe-'+lower+'.local/**');
-   await page.locator('#space canvas').waitFor();
+   await page.locator('#space canvas').waitFor();console.log(edition+': offline WebGL canvas ready');
    assert.equal(await page.evaluate(async()=>{try{await fetch('https://example.com');return false}catch{return true}}),true);
    await page.locator('#teacherToggle').click();
    await page.locator('#appUpdateStatus').waitFor();assert((await page.locator('#appUpdateStatus').textContent()).includes('v'+version));
    // CDP keyboard events do not reach Electron's native before-input-event on Mac.
    // Send through webContents so this exercises the actual F11 handler.
-   const f11=()=>app.evaluate(({BrowserWindow})=>{const w=BrowserWindow.getAllWindows()[0];w.webContents.sendInputEvent({type:'keyDown',keyCode:'F11'});w.webContents.sendInputEvent({type:'keyUp',keyCode:'F11'});});
-   await f11();
+   const f11=()=>app.evaluate(({BrowserWindow})=>{const w=BrowserWindow.getAllWindows()[0];w.focus();w.webContents.sendInputEvent({type:'keyDown',keyCode:'F11'});w.webContents.sendInputEvent({type:'keyUp',keyCode:'F11'});});
+   console.log(edition+': sending native F11');await f11();await new Promise(resolve=>setTimeout(resolve,500));
    assert.equal(await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].isSimpleFullScreen()),true);
    assert.equal(await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].isFullScreen()),false);
-   await f11();
+   console.log(edition+': sending native F11 exit');await f11();await new Promise(resolve=>setTimeout(resolve,500));
    assert.equal(await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].isSimpleFullScreen()),false);
    assert.equal(await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].isFullScreen()),false);
    assert.equal(await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].isVisible()),true);
    // Also exercise the classroom button, including its DOM fullscreen exit.
-   await page.locator('#fullscreenToggle').click();
+   console.log(edition+': clicking classroom fullscreen');await page.locator('#fullscreenToggle').click();
    await page.waitForFunction(()=>!!document.fullscreenElement);
    assert.equal(await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].isSimpleFullScreen()),true);
    assert.equal(await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].isFullScreen()),false);
@@ -46,12 +48,12 @@ const version=require('./package.json').version;
    await page.screenshot({path:path.join(out,`mac-${process.arch}-${lower}-startup.png`)});
    report.result='pass';console.log(`${edition}: real macOS ${process.arch}, DMG v${version}, offline WebGL scene and version UI PASS`);
   }catch(error){
-   report.result='fail';report.error=error.stack||String(error);
+   report.result='fail';report.error=error.stack||String(error);console.error(report.error);
    if(page){await page.screenshot({path:path.join(out,`mac-${process.arch}-${lower}-failure.png`)}).catch(()=>{});report.visibleText=await page.locator('body').innerText().catch(()=>null);}
    throw error;
   }finally{
    fs.writeFileSync(path.join(out,`mac-${process.arch}-${lower}-runtime.json`),JSON.stringify(report,null,2));
-   if(app)await app.close();
+   if(app){console.log(edition+': closing test app');let timer;try{await Promise.race([app.close(),new Promise((_,reject)=>{timer=setTimeout(()=>{app.process().kill('SIGKILL');reject(Error('Test app did not close within 15 seconds'));},15000)})]);}finally{clearTimeout(timer)}}
   }
  }
 })().catch(error=>{console.error(error);process.exit(1)});

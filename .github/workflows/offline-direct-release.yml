@@ -39,6 +39,7 @@ jobs:
       - run: node test-updates.cjs
       - run: node test-update-consent.cjs
       - run: node test-windows-updater.cjs
+        if: runner.os == 'Windows'
       - name: Build the explicitly disclosed direct-download packages
         run: node build.cjs
         env:

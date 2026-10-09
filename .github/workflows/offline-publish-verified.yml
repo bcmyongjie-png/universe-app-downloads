@@ -1,0 +1,134 @@
+name: Publish verified Universe Offline 2.2.15 installers
+# Reuses the exact Windows/Mac artifacts whose complete build/lesson checks passed.
+# Intel hosted VMs have no usable WebGL GPU. x64 code is checked under Rosetta
+# with graphics on Apple Silicon; this is disclosed and is not an Intel hardware pass.
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: universe-publish-2.2.15
+  cancel-in-progress: false
+jobs:
+  verify_mac:
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [arm64, x64]
+    runs-on: macos-15
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          architecture: ${{ matrix.arch }}
+      - name: Restore the same test source
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo 'be97777bc12f4efc6986057019060fa9895dbb1915374ffcb7d9181e1b306704  offline-source-2.2.15.zip' | shasum -a 256 -c -
+          unzip -q offline-source-2.2.15.zip -d offline
+          cp test-mac-runtime-2.2.15.cjs offline/test-mac-runtime.cjs
+          node -e "if(process.arch!=='${{ matrix.arch }}')throw Error('Wrong test architecture')"
+          cd offline
+          npm ci
+      - uses: actions/download-artifact@v4
+        with:
+          name: installers-2.2.15-macOS
+          path: installers
+          run-id: 37878274228
+          github-token: ${{ github.token }}
+      - name: Copy fresh apps from the actual release DMGs
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p offline/smoke-results
+          sw_vers > offline/smoke-results/macos-system.txt
+          uname -m >> offline/smoke-results/macos-system.txt
+          for edition in Teacher Student; do
+            lower=$(echo "$edition" | tr '[:upper:]' '[:lower:]')
+            dmg=$(find installers -type f -name "Universe-$edition-Offline-2.2.15-Mac.dmg")
+            test -f "$dmg"
+            hdiutil verify "$dmg"
+            mount="$RUNNER_TEMP/universe-dmg-$lower"
+            mkdir -p "$mount"
+            hdiutil attach -readonly -nobrowse -mountpoint "$mount" "$dmg"
+            trap 'hdiutil detach "$mount" || true' EXIT
+            app="offline/dist/$lower/mac-universal/Universe $edition.app"
+            mkdir -p "offline/dist/$lower/mac-universal"
+            ditto "$mount/Universe $edition.app" "$app"
+            hdiutil detach "$mount"
+            trap - EXIT
+            codesign --verify --deep --strict "$app"
+            lipo "$app/Contents/MacOS/Universe $edition" -verify_arch arm64 x86_64
+            lipo "$app/Contents/Resources/mac-display-helper" -verify_arch arm64 x86_64
+            version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")
+            test "$version" = '2.2.15'
+            minimum=$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$app/Contents/Info.plist")
+            case "$minimum" in 13|13.0|13.0.0) ;; *) echo "Unexpected minimum macOS: $minimum"; exit 1 ;; esac
+            printf '%s\n' "$minimum" > "offline/smoke-results/$lower-minimum-macos.txt"
+            codesign -dv --verbose=4 "$app" 2> "offline/smoke-results/$lower-signature.txt"
+          done
+      - name: Verify selected binary architecture, display helper, offline startup and fullscreen
+        working-directory: offline
+        run: node test-mac-runtime.cjs
+      - name: Test every lesson and video from the DMG-installed apps
+        working-directory: offline
+        run: node smoke.cjs
+      - name: Verify Mac chapter selection, labels and stellar inspection
+        working-directory: offline
+        shell: bash
+        run: |
+          set -euo pipefail
+          node test-chapter-selection.cjs
+          node test-galaxy-language.cjs
+          node test-stellar-paths.cjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mac-dmg-validation-${{ matrix.arch }}
+          path: offline/smoke-results/
+  release:
+    needs: verify_mac
+    # User requested publication before physical projector verification.
+    # Keep platform build/runtime checks mandatory and disclose that limitation.
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: installers-2.2.15-*
+          path: installers
+          merge-multiple: true
+          run-id: 37878274228
+          github-token: ${{ github.token }}
+      - name: Publish all four installers together after package and supported-runtime tests pass
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh api repos/$GH_REPO/actions/runs/37878274228/jobs > build-jobs.json
+          node -e "const jobs=require('./build-jobs.json').jobs;for(const name of ['build (windows-latest)','build (macos-15)'])if(!jobs.some(j=>j.name===name&&j.conclusion==='success'))throw Error('Required build/checks did not pass: '+name)"
+          gh api repos/$GH_REPO/actions/runs/37878274228 --jq .head_sha | grep -qx ab2f3f67aa62bc93f4e2c1d2dbff2a00a2786861
+          find installers -type f -exec cp {} . \;
+          node <<'NODE'
+          const fs=require('fs');let notes=fs.readFileSync('RELEASE-NOTES.md','utf8');notes=notes.replace('发布流程要求两种芯片的实际 DMG 自动测试通过；实体投影双屏验证将另行完成。','Apple Silicon 原生运行及 x64 程序在 Rosetta 下的实际 DMG 自动测试通过。Intel 云端机器缺少可用图形加速，实体 Intel Mac 的 3D 运行仍待验证；实体投影双屏验证也将另行完成。');fs.writeFileSync('RELEASE-NOTES.md',notes);
+          NODE
+          for edition in Teacher Student; do
+            test -s "Universe-$edition-Offline-2.2.15-Setup.exe"
+            test -s "Universe-$edition-Offline-2.2.15-Mac.dmg"
+          done
+          for edition in teacher student; do
+            grep -q '^version: 2.2.15$' "$edition.yml"
+            node -e "if(require('./$edition-mac.json').version!=='2.2.15')throw Error('Mac update version mismatch')"
+          done
+          sha256sum Universe-* > SHA256SUMS-offline.txt
+          gh release create offline-v2.2.15 Universe-* teacher.yml student.yml teacher-mac.json student-mac.json SHA256SUMS-offline.txt --target ab2f3f67aa62bc93f4e2c1d2dbff2a00a2786861 --draft --title 'Universe Offline 2.2.15' --notes-file RELEASE-NOTES.md
+          test "$(gh release view offline-v2.2.15 --json assets --jq '.assets | length')" = 9
+          gh release edit offline-v2.2.15 --draft=false --latest

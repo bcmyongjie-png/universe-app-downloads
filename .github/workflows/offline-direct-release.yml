@@ -1,0 +1,216 @@
+name: Release Universe Offline 2.2.15
+on:
+  workflow_dispatch:
+  push:
+    paths: ['offline-source-2.2.15.zip']
+concurrency:
+  group: offline-release
+  cancel-in-progress: false
+permissions:
+  contents: read
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-15]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 50
+    defaults:
+      run:
+        working-directory: offline
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Extract the requested 2.2.15 source
+        working-directory: .
+        shell: bash
+        run: |
+          echo '0e73c3796af61187844c06b8a6075bf0dca8f769a77f167fcf7e2c57c5eb409e  offline-source-2.2.15.zip' | sha256sum -c -
+          unzip -q offline-source-2.2.15.zip -d offline
+          node -e "if(require('./offline/package.json').version!=='2.2.15')throw Error('Wrong source version')"
+      - run: npm ci
+      - name: Bundle and verify offline assets
+        run: node fetch-content.cjs
+      - run: node test-content.cjs
+      - run: node --test test-projector-native.cjs test-display-mode.cjs test-build-signing.cjs test-mac-metadata.cjs test-mac-display-mode.cjs
+      - run: node test-updates.cjs
+      - run: node test-update-consent.cjs
+      - run: node test-windows-updater.cjs
+      - name: Build the explicitly disclosed direct-download packages
+        run: node build.cjs
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+          UNIVERSE_UNSIGNED_RELEASE: '1'
+      - name: Record Windows signature status without claiming publisher verification
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Path smoke-results -Force | Out-Null
+          $records = foreach ($edition in @('Teacher','Student')) {
+            $lower = $edition.ToLowerInvariant()
+            foreach ($file in @("dist/$lower/win-unpacked/Universe $edition.exe", "dist/$lower/Universe-$edition-Offline-2.2.15-Setup.exe")) {
+              $sig = Get-AuthenticodeSignature -LiteralPath $file
+              [pscustomobject]@{File=$file;Status=$sig.Status.ToString();Publisher=$sig.SignerCertificate.Subject}
+            }
+          }
+          $records | ConvertTo-Json | Set-Content smoke-results/windows-signatures.json
+          $records | Format-Table
+      - name: Verify both Mac architectures, ad-hoc signatures and DMG integrity
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          for edition in Teacher Student; do
+            lower=$(echo "$edition" | tr '[:upper:]' '[:lower:]')
+            app="dist/$lower/mac-universal/Universe $edition.app"
+            lipo "$app/Contents/MacOS/Universe $edition" -verify_arch arm64 x86_64
+            lipo "$app/Contents/Resources/mac-display-helper" -verify_arch arm64 x86_64
+            codesign --verify --strict "$app/Contents/Resources/mac-display-helper"
+            codesign --verify --deep --strict "$app"
+            hdiutil verify "dist/$lower/Universe-$edition-Offline-2.2.15-Mac.dmg"
+          done
+      - name: Generate Mac update metadata
+        if: runner.os == 'macOS'
+        run: node update-metadata.cjs
+      - name: Test all lessons and videos with external network blocked
+        run: node smoke.cjs
+      - name: Verify chapter filters, complete topic entrances and navigation
+        shell: bash
+        run: |
+          set -euo pipefail
+          node test-chapter-navigation.cjs
+          node test-chapter-selection.cjs
+          node test-chapter-topics.cjs
+          node test-chapter-transition.cjs
+      - name: Verify galaxy names and three stellar evolution paths
+        shell: bash
+        run: |
+          set -euo pipefail
+          node test-galaxy-language.cjs
+          node test-stellar-paths.cjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installers-2.2.15-${{ runner.os }}
+          path: |
+            offline/dist/*/*Offline-2.2.15*.exe
+            offline/dist/*/*Offline-2.2.15*.dmg
+            offline/dist/*/teacher.yml
+            offline/dist/*/student.yml
+            offline/dist/*/*-mac.json
+            offline/RELEASE-NOTES.md
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: tests-2.2.15-${{ runner.os }}
+          path: offline/smoke-results/
+  verify_mac:
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [macos-15, macos-15-intel]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Restore the same test source
+        shell: bash
+        run: |
+          set -euo pipefail
+          unzip -q offline-source-2.2.15.zip -d offline
+          cd offline
+          npm ci
+      - uses: actions/download-artifact@v4
+        with:
+          name: installers-2.2.15-macOS
+          path: installers
+      - name: Copy fresh apps from the actual release DMGs
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p offline/smoke-results
+          sw_vers > offline/smoke-results/macos-system.txt
+          uname -m >> offline/smoke-results/macos-system.txt
+          for edition in Teacher Student; do
+            lower=$(echo "$edition" | tr '[:upper:]' '[:lower:]')
+            dmg=$(find installers -type f -name "Universe-$edition-Offline-2.2.15-Mac.dmg")
+            test -f "$dmg"
+            hdiutil verify "$dmg"
+            mount="$RUNNER_TEMP/universe-dmg-$lower"
+            mkdir -p "$mount"
+            hdiutil attach -readonly -nobrowse -mountpoint "$mount" "$dmg"
+            trap 'hdiutil detach "$mount" || true' EXIT
+            app="offline/dist/$lower/mac-universal/Universe $edition.app"
+            mkdir -p "offline/dist/$lower/mac-universal"
+            ditto "$mount/Universe $edition.app" "$app"
+            hdiutil detach "$mount"
+            trap - EXIT
+            codesign --verify --deep --strict "$app"
+            lipo "$app/Contents/MacOS/Universe $edition" -verify_arch arm64 x86_64
+            lipo "$app/Contents/Resources/mac-display-helper" -verify_arch arm64 x86_64
+            version=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")
+            test "$version" = '2.2.15'
+            minimum=$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' "$app/Contents/Info.plist")
+            case "$minimum" in 13|13.0|13.0.0) ;; *) echo "Unexpected minimum macOS: $minimum"; exit 1 ;; esac
+            printf '%s\n' "$minimum" > "offline/smoke-results/$lower-minimum-macos.txt"
+            codesign -dv --verbose=4 "$app" 2> "offline/smoke-results/$lower-signature.txt"
+          done
+      - name: Verify native chip, display helper, offline startup and Space-free fullscreen
+        working-directory: offline
+        run: node test-mac-runtime.cjs
+      - name: Test every lesson and video from the DMG-installed apps
+        working-directory: offline
+        run: node smoke.cjs
+      - name: Verify Mac chapter selection, labels and stellar inspection
+        working-directory: offline
+        shell: bash
+        run: |
+          set -euo pipefail
+          node test-chapter-selection.cjs
+          node test-galaxy-language.cjs
+          node test-stellar-paths.cjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mac-dmg-validation-${{ matrix.runner }}
+          path: offline/smoke-results/
+  release:
+    needs: [build, verify_mac]
+    # User requested publication before physical projector verification.
+    # Keep platform build/runtime checks mandatory and disclose that limitation.
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: installers-2.2.15-*
+          path: installers
+          merge-multiple: true
+      - name: Publish all four installers together after platform tests pass
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          find installers -type f -exec cp {} . \;
+          for edition in Teacher Student; do
+            test -s "Universe-$edition-Offline-2.2.15-Setup.exe"
+            test -s "Universe-$edition-Offline-2.2.15-Mac.dmg"
+          done
+          for edition in teacher student; do
+            grep -q '^version: 2.2.15$' "$edition.yml"
+            node -e "if(require('./$edition-mac.json').version!=='2.2.15')throw Error('Mac update version mismatch')"
+          done
+          sha256sum Universe-* > SHA256SUMS-offline.txt
+          gh release create offline-v2.2.15 Universe-* teacher.yml student.yml teacher-mac.json student-mac.json SHA256SUMS-offline.txt --draft --title 'Universe Offline 2.2.15' --notes-file RELEASE-NOTES.md
+          test "$(gh release view offline-v2.2.15 --json assets --jq '.assets | length')" = 9
+          gh release edit offline-v2.2.15 --draft=false --latest

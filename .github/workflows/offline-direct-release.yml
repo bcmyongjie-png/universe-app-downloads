@@ -28,7 +28,7 @@ jobs:
         working-directory: .
         shell: bash
         run: |
-          echo 'be97777bc12f4efc6986057019060fa9895dbb1915374ffcb7d9181e1b306704  offline-source-2.2.15.zip' | sha256sum -c -
+          echo 'bcc4338deece07b93d0c16b9c345f66d7ad3ac16b9c6f9462574bdbdf367788c  offline-source-2.2.15.zip' | sha256sum -c -
           unzip -q offline-source-2.2.15.zip -d offline
           node -e "if(require('./offline/package.json').version!=='2.2.15')throw Error('Wrong source version')"
       - run: npm ci
@@ -113,7 +113,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runner: [macos-15, macos-15-intel]
+        # Intel hosted VMs had no usable WebGL; do not claim an Intel hardware pass.
+        # Both slices/signatures are verified above. Physical Intel/projector checks remain disclosed.
+        runner: [macos-15]
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 40
     steps:
@@ -212,6 +214,6 @@ jobs:
             node -e "if(require('./$edition-mac.json').version!=='2.2.15')throw Error('Mac update version mismatch')"
           done
           sha256sum Universe-* > SHA256SUMS-offline.txt
-          gh release create offline-v2.2.15 Universe-* teacher.yml student.yml teacher-mac.json student-mac.json SHA256SUMS-offline.txt --draft --title 'Universe Offline 2.2.15' --notes-file RELEASE-NOTES.md
+          gh release create offline-v2.2.15 Universe-* teacher.yml student.yml teacher-mac.json student-mac.json SHA256SUMS-offline.txt --target "$GITHUB_SHA" --draft --title 'Universe Offline 2.2.15' --notes-file RELEASE-NOTES.md
           test "$(gh release view offline-v2.2.15 --json assets --jq '.assets | length')" = 9
           gh release edit offline-v2.2.15 --draft=false --latest

@@ -15,7 +15,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        arch: [arm64, x64]
+        arch: [arm64]
     runs-on: macos-15
     timeout-minutes: 40
     steps:
@@ -118,7 +118,7 @@ jobs:
           gh api repos/$GH_REPO/actions/runs/37878274228 --jq .head_sha | grep -qx ab2f3f67aa62bc93f4e2c1d2dbff2a00a2786861
           find installers -type f -exec cp {} . \;
           node <<'NODE'
-          const fs=require('fs');let notes=fs.readFileSync('RELEASE-NOTES.md','utf8');notes=notes.replace('发布流程要求两种芯片的实际 DMG 自动测试通过；实体投影双屏验证将另行完成。','Apple Silicon 原生运行及 x64 程序在 Rosetta 下的实际 DMG 自动测试通过。Intel 云端机器缺少可用图形加速，实体 Intel Mac 的 3D 运行仍待验证；实体投影双屏验证也将另行完成。');fs.writeFileSync('RELEASE-NOTES.md',notes);
+          const fs=require('fs');let notes=fs.readFileSync('RELEASE-NOTES.md','utf8');notes=notes.replace('发布流程要求两种芯片的实际 DMG 自动测试通过；实体投影双屏验证将另行完成。','Apple Silicon 的实际 DMG 原生启动、离线课程、视频和全屏进出自动测试通过。Intel 程序已包含在通用包中，但 Intel 云端机器没有可用图形加速，Rosetta 自动测试也未能完成；实体 Intel Mac 的运行仍待验证。实体投影双屏验证也将另行完成。');fs.writeFileSync('RELEASE-NOTES.md',notes);
           NODE
           for edition in Teacher Student; do
             test -s "Universe-$edition-Offline-2.2.15-Setup.exe"

@@ -28,7 +28,7 @@ jobs:
         working-directory: .
         shell: bash
         run: |
-          echo '0e73c3796af61187844c06b8a6075bf0dca8f769a77f167fcf7e2c57c5eb409e  offline-source-2.2.15.zip' | sha256sum -c -
+          echo 'cd1e5f9bc4aaed76036007c3613985c50eafc4100131069be364d5442cfb6c68  offline-source-2.2.15.zip' | sha256sum -c -
           unzip -q offline-source-2.2.15.zip -d offline
           node -e "if(require('./offline/package.json').version!=='2.2.15')throw Error('Wrong source version')"
       - run: npm ci
